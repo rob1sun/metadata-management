@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>SAML metadata – välj feeds</title>
 
-  <!-- Ange din worker-bas (OLIKA origin). Lämna tomt om samma origin. -->
+  <!-- Sätt din Worker-bas (om GUI och API ligger på olika origins).
+       Exempel: 'https://din-worker.workers.dev' eller 'https://api.dindomän.se' -->
   <script>
-    // Exempel: 'https://din-worker.workers.dev' eller 'https://api.dindomän.se'
     window.API_BASE = 'https://md-fetch-publish.rob1sun9764.workers.dev/';
   </script>
 
@@ -65,8 +65,8 @@
       </div>
 
       <div class="small">
-        Backend förväntar sig <code>POST /ingest</code> med JSON:
-        <code>{"urls":[...]}</code>.
+        API: <code>POST {API_BASE}/ingest</code> med JSON:
+        <code>{"items":[{"url":"…","label":"…"}, ...]}</code>.
       </div>
     </div>
   </section>
@@ -75,6 +75,7 @@
     <strong>Publicerade endpoints (din worker):</strong>
     <ul class="links">
       <li><a id="linkMeta"   href="#" target="_blank" rel="noopener">/metadata.xml</a> – senaste manipulerade metadata</li>
+      <li><a id="linkJson"   href="#" target="_blank" rel="noopener">/metadata.json</a> – JSON med entiteter</li>
       <li><a id="linkStatus" href="#" target="_blank" rel="noopener">/status</a> – status/metadata</li>
     </ul>
   </section>
@@ -82,7 +83,7 @@
   <script>
     (function () {
       // --- API base + hjälpfunktion ---
-      const API_BASE = (window.API_BASE || '').replace(/\/+$/, ''); // trimma ev. slut-slash
+      const API_BASE = (window.API_BASE || '').replace(/\/+$/, '');
       const api = (path) => API_BASE ? `${API_BASE}${path}` : path;
 
       // --- Feed-källa ---
@@ -98,6 +99,7 @@
 
       // Sätt länkarna till din worker dynamiskt
       document.getElementById('linkMeta').href   = api('/metadata.xml');
+      document.getElementById('linkJson').href   = api('/metadata.json');
       document.getElementById('linkStatus').href = api('/status');
 
       let allCheckboxes = [];
@@ -110,18 +112,21 @@
         loadErrorEl.textContent = text;
         loadErrorEl.classList.remove('hidden');
       }
-      function hideLoad() { loadingEl.classList.add('hidden'); }
 
-      // Robust hämtning/parsning av JSON (tål text/html + trailing commas)
+      // Robust hämtning/parsning av JSON
       async function fetchFeeds() {
         const res = await fetch(FEEDS_URL, { headers: { 'accept': 'application/json,text/plain,text/html' } });
         if (!res.ok) throw new Error(`Kunde inte hämta feed-lista (${res.status})`);
         let text = await res.text();
 
-        if (!looksLikeJson(text)) {
+        // Om svaret inte ser ut som ren JSON, extrahera JSON-del
+        const trimmed = text.trim();
+        if (!((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']')))) {
           const m = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
           if (m) text = m[0];
         }
+
+        // Trailing commas
         text = text.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
 
         let data = JSON.parse(text);
@@ -133,12 +138,16 @@
         return data;
       }
 
-      function looksLikeJson(s) {
-        const t = s.trim();
-        return (t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'));
+      function escapeHtml(s) {
+        return String(s).replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;')
+                        .replace(/'/g, '&#39;');
       }
 
       function renderFeeds(groups) {
+        loadingEl.classList.add('hidden');
         feedsContainer.innerHTML = '';
         allCheckboxes = [];
 
@@ -183,7 +192,7 @@
             cb.type = 'checkbox';
             cb.id = id;
             cb.value = url;
-            cb.dataset.label = title;   // "fint" namn som workern kan tagga med
+            cb.dataset.label = title; // ⬅️ fint namn sparas här
 
             const row = document.createElement('div');
             row.className = 'feed-row';
@@ -199,6 +208,7 @@
             allCheckboxes.push(cb);
           });
 
+          // Gruppknappar
           markAll.addEventListener('click', () => {
             wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
           });
@@ -211,49 +221,27 @@
         });
       }
 
-      function escapeHtml(s) {
-        return String(s).replace(/&/g, '&amp;')
-                        .replace(/</g, '&lt;')
-                        .replace(/>/g, '&gt;')
-                        .replace(/"/g, '&quot;')
-                        .replace(/'/g, '&#39;');
-      }
-
       async function ingestSelected() {
         setMsg('', '');
-        const urls = allCheckboxes.filter(cb => cb.checked).map(cb => cb.value);
-        if (!urls.length) {
+        const checked = allCheckboxes.filter(cb => cb.checked);
+
+        if (!checked.length) {
           setMsg('Välj minst en feed.', 'err');
           return;
         }
-          const items = checked.map(cb => ({
-    url: cb.value,
-    label: cb.dataset.label || cb.value
-  }));
 
-  try {
-    ingestBtn.disabled = true;
-    const res = await fetch(api('/ingest'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      // ⬇️ SKICKA items (workern stödjer både items och urls)
-      body: JSON.stringify({ items })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) throw new Error(data.error || `Fel (${res.status})`);
-    setMsg('Inläsningen har påbörjats.', 'ok');
-  } catch (e) {
-    setMsg(e.message || 'Ett fel uppstod vid inläsningen.', 'err');
-  } finally {
-    ingestBtn.disabled = false;
-  }
-}
+        // Skicka { items: [{ url, label }, ...] }
+        const items = checked.map(cb => ({
+          url: cb.value,
+          label: cb.dataset.label || cb.value
+        }));
+
         try {
           ingestBtn.disabled = true;
           const res = await fetch(api('/ingest'), {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ urls })
+            body: JSON.stringify({ items })
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok || data.error) throw new Error(data.error || `Fel (${res.status})`);
@@ -265,14 +253,10 @@
         }
       }
 
-      function selectAll()  { allCheckboxes.forEach(cb => cb.checked = true); }
-      function clearAll()   { allCheckboxes.forEach(cb => cb.checked = false); }
-
       // init
       (async () => {
         try {
           const groups = await fetchFeeds();
-          loadingEl.classList.add('hidden');
           renderFeeds(groups);
         } catch (e) {
           loadingEl.classList.add('hidden');
@@ -280,8 +264,12 @@
         }
       })();
 
-      document.getElementById('selectAllBtn').addEventListener('click', selectAll);
-      document.getElementById('clearAllBtn').addEventListener('click', clearAll);
+      document.getElementById('selectAllBtn').addEventListener('click', () => {
+        allCheckboxes.forEach(cb => cb.checked = true);
+      });
+      document.getElementById('clearAllBtn').addEventListener('click', () => {
+        allCheckboxes.forEach(cb => cb.checked = false);
+      });
       document.getElementById('ingestBtn').addEventListener('click', ingestSelected);
     })();
   </script>
