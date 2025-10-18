@@ -183,6 +183,7 @@
             cb.type = 'checkbox';
             cb.id = id;
             cb.value = url;
+            cb.dataset.label = title;   // "fint" namn som workern kan tagga med
 
             const row = document.createElement('div');
             row.className = 'feed-row';
@@ -225,6 +226,28 @@
           setMsg('Välj minst en feed.', 'err');
           return;
         }
+          const items = checked.map(cb => ({
+    url: cb.value,
+    label: cb.dataset.label || cb.value
+  }));
+
+  try {
+    ingestBtn.disabled = true;
+    const res = await fetch(api('/ingest'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      // ⬇️ SKICKA items (workern stödjer både items och urls)
+      body: JSON.stringify({ items })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.error || `Fel (${res.status})`);
+    setMsg('Inläsningen har påbörjats.', 'ok');
+  } catch (e) {
+    setMsg(e.message || 'Ett fel uppstod vid inläsningen.', 'err');
+  } finally {
+    ingestBtn.disabled = false;
+  }
+}
         try {
           ingestBtn.disabled = true;
           const res = await fetch(api('/ingest'), {
