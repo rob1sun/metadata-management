@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>SAML metadata – välj feeds</title>
 
+  <!-- Ange din worker-bas (OLIKA origin). Lämna tomt om samma origin. -->
+  <script>
+    // Exempel: 'https://din-worker.workers.dev' eller 'https://api.dindomän.se'
+    window.API_BASE = 'https://md-fetch-publish.rob1sun9764.workers.dev/';
+  </script>
+
   <!-- Anti-indexering -->
   <meta name="robots" content="noindex, nofollow, noarchive" />
   <meta name="googlebot" content="noindex, nofollow, noarchive" />
@@ -66,15 +72,20 @@
   </section>
 
   <section class="card">
-    <strong>Publicerade endpoints (om du använder samma worker-backend):</strong>
+    <strong>Publicerade endpoints (din worker):</strong>
     <ul class="links">
-      <li><a href="/metadata.xml" target="_blank" rel="noopener">/metadata.xml</a> – senaste manipulerade metadata</li>
-      <li><a href="/status" target="_blank" rel="noopener">/status</a> – status/metadata</li>
+      <li><a id="linkMeta"   href="#" target="_blank" rel="noopener">/metadata.xml</a> – senaste manipulerade metadata</li>
+      <li><a id="linkStatus" href="#" target="_blank" rel="noopener">/status</a> – status/metadata</li>
     </ul>
   </section>
 
   <script>
     (function () {
+      // --- API base + hjälpfunktion ---
+      const API_BASE = (window.API_BASE || '').replace(/\/+$/, ''); // trimma ev. slut-slash
+      const api = (path) => API_BASE ? `${API_BASE}${path}` : path;
+
+      // --- Feed-källa ---
       const FEEDS_URL = 'https://metadata-management.pages.dev/federation_feeds/';
 
       const feedsContainer = document.getElementById('feedsContainer');
@@ -84,6 +95,10 @@
       const clearAllBtn  = document.getElementById('clearAllBtn');
       const ingestBtn    = document.getElementById('ingestBtn');
       const msg          = document.getElementById('msg');
+
+      // Sätt länkarna till din worker dynamiskt
+      document.getElementById('linkMeta').href   = api('/metadata.xml');
+      document.getElementById('linkStatus').href = api('/status');
 
       let allCheckboxes = [];
 
@@ -97,47 +112,30 @@
       }
       function hideLoad() { loadingEl.classList.add('hidden'); }
 
-      // --- Robust hämtning/parsning av JSON (tål text/html + trailing commas) ---
+      // Robust hämtning/parsning av JSON (tål text/html + trailing commas)
       async function fetchFeeds() {
         const res = await fetch(FEEDS_URL, { headers: { 'accept': 'application/json,text/plain,text/html' } });
         if (!res.ok) throw new Error(`Kunde inte hämta feed-lista (${res.status})`);
         let text = await res.text();
 
-        // Om sidan redan är ren JSON: bra. Annars sanera (ta bort HTML-krimskrams).
-        // 1) Extrahera ev. JSON om den ligger i HTML
         if (!looksLikeJson(text)) {
           const m = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
           if (m) text = m[0];
         }
+        text = text.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
 
-        // 2) Sanera trailing commas (både i objekt och arrayer)
-        text = stripTrailingCommas(text);
-
-        // 3) Försök parse
         let data = JSON.parse(text);
-
-        // Källan har nyckeln "federation feeds" (med mellanslag). Anpassa:
         if (data && !Array.isArray(data)) {
           const key = Object.keys(data).find(k => k.toLowerCase().replace(/\s+/g,'') === 'federationfeeds');
           if (key) data = data[key];
         }
-        // Se till att vi har en array
         if (!Array.isArray(data)) data = [data].filter(Boolean);
-
         return data;
       }
 
       function looksLikeJson(s) {
         const t = s.trim();
         return (t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'));
-      }
-
-      function stripTrailingCommas(jsonText) {
-        // Ta bort trailing commas i objekt: {"a":1,}
-        jsonText = jsonText.replace(/,\s*}/g, '}');
-        // Ta bort trailing commas i array: [1,2,]
-        jsonText = jsonText.replace(/,\s*]/g, ']');
-        return jsonText;
       }
 
       function renderFeeds(groups) {
@@ -151,13 +149,11 @@
 
         groups.forEach((group, idx) => {
           const federation = String(group.federation || 'Okänd federation');
-
-          // Inre feeds: fältet heter "feeds", med poster som har { feed: <namn>, url: <url> }
           const feeds = Array.isArray(group.feeds) ? group.feeds : [];
 
           const details = document.createElement('details');
           details.className = 'fed';
-          details.open = idx < 3; // öppna några för bekvämlighet
+          details.open = idx < 3;
 
           const sum = document.createElement('summary');
           sum.textContent = federation;
@@ -180,8 +176,7 @@
           feeds.forEach((f, i) => {
             const title = (f && (f.feed || f.name || f.title)) ? String(f.feed || f.name || f.title) : 'Okänd feed';
             const url = f && f.url ? String(f.url).trim() : '';
-
-            if (!url) return; // hoppa över poster utan url
+            if (!url) return;
 
             const id = `cb_${idx}_${i}`;
             const cb = document.createElement('input');
@@ -199,12 +194,10 @@
 
             row.appendChild(cb);
             row.appendChild(label);
-
             wrap.appendChild(row);
             allCheckboxes.push(cb);
           });
 
-          // Gruppknappar
           markAll.addEventListener('click', () => {
             wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
           });
@@ -218,12 +211,11 @@
       }
 
       function escapeHtml(s) {
-        return String(s)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
+        return String(s).replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;')
+                        .replace(/'/g, '&#39;');
       }
 
       async function ingestSelected() {
@@ -235,7 +227,7 @@
         }
         try {
           ingestBtn.disabled = true;
-          const res = await fetch('/ingest', {
+          const res = await fetch(api('/ingest'), {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ urls })
@@ -257,17 +249,17 @@
       (async () => {
         try {
           const groups = await fetchFeeds();
-          hideLoad();
+          loadingEl.classList.add('hidden');
           renderFeeds(groups);
         } catch (e) {
-          hideLoad();
+          loadingEl.classList.add('hidden');
           showError(e.message || 'Kunde inte ladda feedlistan.');
         }
       })();
 
-      selectAllBtn.addEventListener('click', selectAll);
-      clearAllBtn.addEventListener('click', clearAll);
-      ingestBtn.addEventListener('click', ingestSelected);
+      document.getElementById('selectAllBtn').addEventListener('click', selectAll);
+      document.getElementById('clearAllBtn').addEventListener('click', clearAll);
+      document.getElementById('ingestBtn').addEventListener('click', ingestSelected);
     })();
   </script>
 </body>
