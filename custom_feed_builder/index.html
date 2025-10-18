@@ -1,271 +1,81 @@
-# `index.html` — fristående fil för Cloudflare Pages
-
-> Spara som **index.html** i ditt repo. Den är helt fristående (endast HTML+CSS+JS). Du kan publicera via GitHub → Cloudflare Pages. Sätt `WORKER_BASE` här i filen till din Worker-URL.
-
-```html
 <!doctype html>
-<html lang="sv">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="robots" content="noindex, nofollow" />
-  <title>SAML Metadata Selector</title>
-  <style>
-    :root { --bg:#0b0f14; --panel:#0f1520; --muted:#9aa7b4; --text:#e6eef5; --accent:#4cc9f0; --accent2:#80ffdb; --line:#1f2a37; --danger:#ef4444; --ok:#22c55e; }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; background: var(--bg); color: var(--text); }
-    a { color: var(--accent); text-decoration: none; }
+}
 
-    header { padding: 20px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(76,201,240,.08), rgba(0,0,0,0)); }
-    h1 { margin:0 0 6px 0; font-size: 20px; }
-    .sub { color: var(--muted); font-size: 12px; }
 
-    .container { max-width: 1100px; margin: 0 auto; padding: 16px 20px 40px; }
-    .panel { background: var(--panel); border:1px solid var(--line); border-radius: 14px; padding: 14px; }
-    .bar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:14px 0 18px; }
-    .row { display:flex; gap:10px; align-items:center; }
-    .grow { flex:1; }
+function updateCounts(){
+rowCount.textContent = state.filtered.length;
+selCount.textContent = state.selected.size;
+copyBtn.disabled = state.selected.size === 0;
+buildBtn.disabled = state.selected.size === 0 || !WORKER_BASE;
+selectAll.checked = state.filtered.length>0 && state.filtered.every(it=>state.selected.has(it.entityID||''));
+}
 
-    label { font-size: 12px; color: var(--muted); }
-    select, input[type="text"] { width:100%; background: #0b111a; color: var(--text); border:1px solid #223041; padding:10px 12px; border-radius: 10px; outline:none; }
-    select:hover, input[type="text"]:hover { border-color:#2b3b52; }
-    input::placeholder { color:#6b7786; }
 
-    button { background: var(--accent); color:#001219; border:0; padding:10px 14px; border-radius: 10px; cursor:pointer; font-weight:600; }
-    button.secondary { background:#223041; color: var(--text); }
-    button.ghost { background:transparent; color: var(--text); border:1px solid #2b3b52; }
-    button:disabled { opacity:.55; cursor:not-allowed; }
+function copySelected(){
+const ids = [...state.selected];
+navigator.clipboard.writeText(JSON.stringify(ids, null, 2)).then(()=>{
+copyBtn.textContent = 'Kopierat!';
+setTimeout(()=>copyBtn.textContent='Kopiera valda IDs', 1200);
+});
+}
 
-    .scroll { max-height: 62vh; overflow:auto; border:1px solid var(--line); border-radius: 12px; }
-    .table { width:100%; border-collapse: collapse; }
-    .table th, .table td { padding:10px 10px; border-bottom: 1px solid var(--line); font-size: 13px; vertical-align: top; }
-    .table th { text-align:left; color: var(--muted); font-weight:600; position: sticky; top:0; background: #0e141b; z-index:1; }
-    .table tr:hover td { background: #0e141b; }
 
-    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#102231; color: var(--accent2); font-size: 11px; border:1px solid #1f3347; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; word-break: break-all; }
-    .muted { color: var(--muted); }
-    .foot { display:flex; gap:12px; align-items:center; justify-content: space-between; margin-top:14px; flex-wrap:wrap; }
+async function buildXml(){
+if(!WORKER_BASE){ alert('Sätt WORKER_BASE i filen.'); return; }
+try{
+const payload = { entityIDs: [...state.selected] };
+const res = await fetch(WORKER_BASE + '/build', {
+method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload)
+});
+if(!res.ok){ throw new Error(`HTTP ${res.status}`); }
+const xml = await res.text();
+xmlOut.value = xml;
+resultPanel.style.display = '';
+publishInfo.innerHTML = `Publicerat från Worker-endpointen <span class="mono">/build</span>.`;
+}catch(err){
+alert('Kunde inte bygga/publicera XML: ' + err.message);
+}
+}
 
-    textarea { width:100%; min-height: 220px; background:#0b0f14; color:var(--text); border:1px solid #223041; border-radius: 12px; padding:10px; }
-  </style>
-</head>
-<body>
-  <header>
-    <div class="container">
-      <h1>SAML Metadata Selector</h1>
-      <div class="sub">Läser <span class="mono">metadata.json</span>, filtrerar på <span class="mono">feed</span>, låter dig välja <span class="mono">entityID</span> och bygger filtrerat <span class="mono">metadata.xml</span> via din Cloudflare Worker.</div>
-    </div>
-  </header>
 
-  <main class="container">
-    <section class="panel">
-      <div class="bar">
-        <div class="row grow">
-          <label class="muted" for="feedFilter">Feed:</label>
-          <select id="feedFilter"></select>
-        </div>
-        <div class="row grow">
-          <label class="muted" for="searchBox">Sök:</label>
-          <input id="searchBox" type="text" placeholder="entityID, namn, url…" />
-        </div>
-        <div class="row">
-          <button id="reloadBtn" class="secondary" title="Ladda om JSON">Ladda om</button>
-        </div>
-      </div>
+function downloadXml(){
+const blob = new Blob([xmlOut.value||''], { type: 'application/samlmetadata+xml' });
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a'); a.href = url; a.download = 'metadata_filtered.xml'; a.click();
+setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
 
-      <div class="scroll">
-        <table class="table" id="dataTable">
-          <thead>
-            <tr>
-              <th style="width:36px"><input type="checkbox" id="selectAll" title="Markera alla"></th>
-              <th>entityID</th>
-              <th>feed</th>
-              <th>Namn</th>
-              <th>URL</th>
-            </tr>
-          </thead>
-          <tbody id="tableBody"></tbody>
-        </table>
-      </div>
 
-      <div class="foot">
-        <div class="muted"><span id="rowCount">0</span> träffar • <span id="selCount">0</span> valda</div>
-        <div class="row">
-          <button id="copyBtn" class="ghost" disabled>Kopiera valda IDs</button>
-          <button id="buildBtn" disabled>Skapa & publicera XML</button>
-        </div>
-      </div>
-    </section>
+function copyXml(){
+navigator.clipboard.writeText(xmlOut.value||'');
+copyXmlBtn.textContent='Kopierat!';
+setTimeout(()=>copyXmlBtn.textContent='Kopiera XML', 1200);
+}
 
-    <section class="panel" id="resultPanel" style="display:none;margin-top:16px">
-      <div class="row" style="justify-content: space-between;">
-        <strong>Resultat: Filtrerat metadata.xml</strong>
-        <div class="row" style="gap:8px;">
-          <button id="dlBtn" class="secondary">Ladda ner XML</button>
-          <button id="copyXmlBtn" class="ghost">Kopiera XML</button>
-        </div>
-      </div>
-      <textarea id="xmlOut" readonly></textarea>
-      <div class="muted" id="publishInfo"></div>
-    </section>
-  </main>
 
-  <script>
-    // === Konfiguration ===
-    const JSON_URL = "https://md-fetch-publish.rob1sun9764.workers.dev/metadata.json";
-    // Ange din Worker-basadress här (utan avslutande slash), t.ex. "https://<worker>.<sub>.workers.dev"
-    const WORKER_BASE = ""; // Lämna tomt om du bara vill testa GUI:t utan publicering.
+// Småhjälp
+function escapeHtml(s){
+return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+}
 
-    const state = { raw: [], filtered: [], selected: new Set(), feeds: new Set() };
 
-    // === Element helpers ===
-    const $ = (id) => document.getElementById(id);
-    const feedFilter = $('feedFilter');
-    const searchBox  = $('searchBox');
-    const tableBody  = $('tableBody');
-    const rowCount   = $('rowCount');
-    const selCount   = $('selCount');
-    const selectAll  = $('selectAll');
-    const reloadBtn  = $('reloadBtn');
-    const copyBtn    = $('copyBtn');
-    const buildBtn   = $('buildBtn');
-    const resultPanel= $('resultPanel');
-    const xmlOut     = $('xmlOut');
-    const copyXmlBtn = $('copyXmlBtn');
-    const dlBtn      = $('dlBtn');
-    const publishInfo= $('publishInfo');
+// === Wiring ===
+reloadBtn.addEventListener('click', loadJson);
+feedFilter.addEventListener('change', applyFilter);
+searchBox.addEventListener('input', applyFilter);
+selectAll.addEventListener('change', ()=>{
+if(selectAll.checked){ state.filtered.forEach(it=>state.selected.add(it.entityID||'')); }
+else { state.filtered.forEach(it=>state.selected.delete(it.entityID||'')); }
+renderTable();
+});
+copyBtn.addEventListener('click', copySelected);
+buildBtn.addEventListener('click', buildXml);
+dlBtn.addEventListener('click', downloadXml);
+copyXmlBtn.addEventListener('click', copyXml);
 
-    // === Datahämtning ===
-    async function loadJson(){
-      try{
-        const res = await fetch(JSON_URL, { credentials: 'omit', cache: 'no-store' });
-        if(!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        // Förväntat format: array av objekt { entityID, feed, name?, url? }
-        state.raw = Array.isArray(data) ? data : (data.items || []);
-        // Feeds
-        state.feeds = new Set(state.raw.map(x => x.feed).filter(Boolean));
-        renderFeedOptions();
-        applyFilter();
-      }catch(err){
-        alert('Kunde inte läsa metadata.json: ' + err.message);
-      }
-    }
 
-    function renderFeedOptions(){
-      feedFilter.innerHTML = '';
-      const optAll = document.createElement('option'); optAll.value=''; optAll.textContent='Alla feeds'; feedFilter.appendChild(optAll);
-      [...state.feeds].sort((a,b)=>String(a).localeCompare(String(b))).forEach(feed=>{
-        const o = document.createElement('option'); o.value = feed; o.textContent = feed; feedFilter.appendChild(o);
-      });
-    }
-
-    function applyFilter(){
-      const f = feedFilter.value.trim().toLowerCase();
-      const q = searchBox.value.trim().toLowerCase();
-      state.filtered = state.raw.filter(item=>{
-        const matchesFeed = !f || String(item.feed||'').toLowerCase() === f;
-        const hay = [item.entityID, item.name, item.url, item.feed].map(v=>String(v||'').toLowerCase()).join(' ');
-        const matchesSearch = !q || hay.includes(q);
-        return matchesFeed && matchesSearch;
-      });
-      renderTable();
-    }
-
-    function renderTable(){
-      tableBody.innerHTML = '';
-      state.filtered.forEach(item=>{
-        const tr = document.createElement('tr');
-        const id = item.entityID || '';
-
-        const td0 = document.createElement('td');
-        const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = state.selected.has(id);
-        cb.addEventListener('change', ()=>{ if(cb.checked) state.selected.add(id); else state.selected.delete(id); updateCounts(); });
-        td0.appendChild(cb);
-
-        const td1 = document.createElement('td'); td1.textContent = id; td1.className='mono';
-        const td2 = document.createElement('td'); td2.innerHTML = item.feed ? `<span class="pill">${escapeHtml(String(item.feed))}</span>` : '';
-        const td3 = document.createElement('td'); td3.textContent = item.name || '';
-        const td4 = document.createElement('td');
-        if(item.url){ const a = document.createElement('a'); a.href=item.url; a.textContent=item.url; a.target='_blank'; a.rel='noreferrer noopener'; td4.appendChild(a); }
-        tr.append(td0, td1, td2, td3, td4);
-        tableBody.appendChild(tr);
-      });
-      updateCounts();
-    }
-
-    function updateCounts(){
-      rowCount.textContent = state.filtered.length;
-      selCount.textContent = state.selected.size;
-      copyBtn.disabled = state.selected.size === 0;
-      buildBtn.disabled = state.selected.size === 0 || !WORKER_BASE;
-      selectAll.checked = state.filtered.length>0 && state.filtered.every(it=>state.selected.has(it.entityID||''));
-    }
-
-    function copySelected(){
-      const ids = [...state.selected];
-      navigator.clipboard.writeText(JSON.stringify(ids, null, 2)).then(()=>{
-        copyBtn.textContent = 'Kopierat!';
-        setTimeout(()=>copyBtn.textContent='Kopiera valda IDs', 1200);
-      });
-    }
-
-    async function buildXml(){
-      if(!WORKER_BASE){ alert('Sätt WORKER_BASE i filen.'); return; }
-      try{
-        const payload = { entityIDs: [...state.selected] };
-        const res = await fetch(WORKER_BASE + '/build', {
-          method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload)
-        });
-        if(!res.ok){ throw new Error(`HTTP ${res.status}`); }
-        const xml = await res.text();
-        xmlOut.value = xml;
-        resultPanel.style.display = '';
-        publishInfo.innerHTML = `Publicerat från Worker-endpointen <span class="mono">/build</span>.`;
-      }catch(err){
-        alert('Kunde inte bygga/publicera XML: ' + err.message);
-      }
-    }
-
-    function downloadXml(){
-      const blob = new Blob([xmlOut.value||''], { type: 'application/samlmetadata+xml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'metadata_filtered.xml'; a.click();
-      setTimeout(()=>URL.revokeObjectURL(url), 2000);
-    }
-
-    function copyXml(){
-      navigator.clipboard.writeText(xmlOut.value||'');
-      copyXmlBtn.textContent='Kopierat!';
-      setTimeout(()=>copyXmlBtn.textContent='Kopiera XML', 1200);
-    }
-
-    // Småhjälp
-    function escapeHtml(s){
-      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
-    }
-
-    // === Wiring ===
-    reloadBtn.addEventListener('click', loadJson);
-    feedFilter.addEventListener('change', applyFilter);
-    searchBox.addEventListener('input', applyFilter);
-    selectAll.addEventListener('change', ()=>{
-      if(selectAll.checked){ state.filtered.forEach(it=>state.selected.add(it.entityID||'')); }
-      else { state.filtered.forEach(it=>state.selected.delete(it.entityID||'')); }
-      renderTable();
-    });
-    copyBtn.addEventListener('click', copySelected);
-    buildBtn.addEventListener('click', buildXml);
-    dlBtn.addEventListener('click', downloadXml);
-    copyXmlBtn.addEventListener('click', copyXml);
-
-    // Init
-    loadJson();
-  </script>
+// Init
+loadJson();
+</script>
 </body>
 </html>
-```
-
-**Tips:** Om `metadata.json` kräver CORS: lägg till en `/proxy-json` i din Worker som hämtar samma länk med `cf: { cacheEverything:true }` och returnerar `Access-Control-Allow-Origin: *`. Säg till om du vill att jag skriver den routen också.
