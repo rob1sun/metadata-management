@@ -155,7 +155,6 @@
         const entityID = String(row?.entityID || "");
         const feed     = String(row?.feed || "");
         const name     = String(row?.organizationDisplayName || row?.organizationName || "");
-        // URL finns inte i ditt exempel — lämnas tomt
         return { entityID, feed, name, url: "" };
       }).filter(x => x.entityID);
 
@@ -163,7 +162,7 @@
       renderFeedOptions();
       applyFilter();
     }catch(err){
-      alert("Kunde inte läsa metadata.json: " + err.message);
+      showError(`Kunde inte läsa metadata.json: ${err.message}`);
     }
   }
 
@@ -217,7 +216,7 @@
         const td1 = document.createElement("td"); td1.textContent = id; td1.className="mono";
         const td2 = document.createElement("td"); td2.innerHTML = item.feed ? `<span class="pill">${escapeHtml(String(item.feed))}</span>` : "";
         const td3 = document.createElement("td"); td3.textContent = item.name || "";
-        const td4 = document.createElement("td"); // URL saknas i datat
+        const td4 = document.createElement("td");
         tr.append(td0, td1, td2, td3, td4);
         tableBody.appendChild(tr);
       });
@@ -242,34 +241,42 @@
     });
   }
 
+  // >>> UPDATED: visar feltext i UI (kopierbar) istället för alert
   async function buildXml(){
-  if(!WORKER_BASE){ alert("Sätt WORKER_BASE i scriptet."); return; }
-  try{
-    const payload = { entityIDs: [...state.selected] };
-    const endpoint = WORKER_BASE.replace(/\/+$/,'') + "/build";
-    const res = await fetch(endpoint, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
-    });
-    const text = await res.text(); // läs alltid
-    if(!res.ok){
-      // Försök tolka JSON fel från Workern och visa upp
-      try {
-        const json = JSON.parse(text);
-        alert(`Kunde inte bygga/publicera XML: HTTP ${res.status}\n\n${JSON.stringify(json, null, 2)}`);
-      } catch {
-        alert(`Kunde inte bygga/publicera XML: HTTP ${res.status}\n\n${text.slice(0,400)}`);
-      }
+    if(!WORKER_BASE){
+      showError("Sätt WORKER_BASE i scriptet (Worker-basadress).");
       return;
     }
-    xmlOut.value = text;
-    resultPanel.style.display = "";
-    publishInfo.innerHTML = `Publicerat från <span class="mono">${endpoint}</span>.`;
-  }catch(err){
-    alert("Kunde inte bygga/publicera XML: " + err.message);
+    try{
+      const endpoint = WORKER_BASE.replace(/\/+$/,'') + "/build";
+      const payload = { entityIDs: [...state.selected] };
+      const res = await fetch(endpoint, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await res.text(); // läs alltid
+      if(!res.ok){
+        let pretty = text;
+        try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+        showError([
+          `Kunde inte bygga/publicera XML: HTTP ${res.status}`,
+          `Endpoint: ${endpoint}`,
+          ``,
+          pretty
+        ].join("\n"));
+        return;
+      }
+
+      // OK
+      xmlOut.value = text;
+      resultPanel.style.display = "";
+      publishInfo.innerHTML = `Publicerat från <span class="mono">${endpoint}</span>.`;
+    }catch(err){
+      showError("Kunde inte bygga/publicera XML: " + err.message);
+    }
   }
-}
 
   function downloadXml(){
     const blob = new Blob([xmlOut.value||""], { type: "application/samlmetadata+xml" });
@@ -289,6 +296,14 @@
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
+  // Visa feltext i textarea (kopierbar) + console.error
+  function showError(msg){
+    try { console.error(msg); } catch {}
+    resultPanel.style.display = "";
+    publishInfo.innerHTML = `<span class="danger">Fel</span>`;
+    xmlOut.value = String(msg || "Okänt fel");
+  }
+
   // === Wiring ===
   reloadBtn.addEventListener("click", loadJson);
   feedFilter.addEventListener("change", applyFilter);
@@ -306,6 +321,7 @@
   // Init
   loadJson();
 </script>
+
 
 </body>
 </html>
