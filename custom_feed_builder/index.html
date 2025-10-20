@@ -243,23 +243,33 @@
   }
 
   async function buildXml(){
-    if(!WORKER_BASE){ alert("Sätt WORKER_BASE i scriptet."); return; }
-    try{
-      const payload = { entityIDs: [...state.selected] };
-      const res = await fetch(WORKER_BASE + "/build", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify(payload)
-      });
-      if(!res.ok){ throw new Error(`HTTP ${res.status}`); }
-      const xml = await res.text();
-      xmlOut.value = xml;
-      resultPanel.style.display = "";
-      publishInfo.innerHTML = `Publicerat från Worker-endpointen <span class="mono">/build</span>.`;
-    }catch(err){
-      alert("Kunde inte bygga/publicera XML: " + err.message);
+  if(!WORKER_BASE){ alert("Sätt WORKER_BASE i scriptet."); return; }
+  try{
+    const payload = { entityIDs: [...state.selected] };
+    const endpoint = WORKER_BASE.replace(/\/+$/,'') + "/build";
+    const res = await fetch(endpoint, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    const text = await res.text(); // läs alltid
+    if(!res.ok){
+      // Försök tolka JSON fel från Workern och visa upp
+      try {
+        const json = JSON.parse(text);
+        alert(`Kunde inte bygga/publicera XML: HTTP ${res.status}\n\n${JSON.stringify(json, null, 2)}`);
+      } catch {
+        alert(`Kunde inte bygga/publicera XML: HTTP ${res.status}\n\n${text.slice(0,400)}`);
+      }
+      return;
     }
+    xmlOut.value = text;
+    resultPanel.style.display = "";
+    publishInfo.innerHTML = `Publicerat från <span class="mono">${endpoint}</span>.`;
+  }catch(err){
+    alert("Kunde inte bygga/publicera XML: " + err.message);
   }
+}
 
   function downloadXml(){
     const blob = new Blob([xmlOut.value||""], { type: "application/samlmetadata+xml" });
