@@ -243,18 +243,31 @@
 
   // >>> UPDATED: visar feltext i UI (kopierbar) istället för alert
   async function buildXml(){
-  if(!WORKER_BASE){ showError("Sätt WORKER_BASE i scriptet."); return; }
-  const endpoint = WORKER_BASE.replace(/\/+$/,'') + "/build";
-  const payload = {
-    entityIDs: [...state.selected],
-    // peka här på den som fungerar hos dig efter debug-upstream-testet:
-    sourceXml: "https://md-fetch-publish.rob1sun9764.workers.dev/metadata" 
-  };
-  const res = await fetch(endpoint, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
-  const text = await res.text();
-  if(!res.ok){ let pretty=text; try{ pretty=JSON.stringify(JSON.parse(text),null,2);}catch{}; showError(`HTTP ${res.status}\n\n${pretty}`); return; }
-  xmlOut.value = text; resultPanel.style.display = ""; publishInfo.innerHTML = `Publicerat från <span class="mono">${endpoint}</span>.`;
-}
+    if(!WORKER_BASE){
+      showError("Sätt WORKER_BASE i scriptet (Worker-basadress).");
+      return;
+    }
+    try{
+      const endpoint = WORKER_BASE.replace(/\/+$/,'') + "/build";
+      const payload = { entityIDs: [...state.selected] };
+      const res = await fetch(endpoint, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await res.text(); // läs alltid
+      if(!res.ok){
+        let pretty = text;
+        try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+        showError([
+          `Kunde inte bygga/publicera XML: HTTP ${res.status}`,
+          `Endpoint: ${endpoint}`,
+          ``,
+          pretty
+        ].join("\n"));
+        return;
+      }
 
       // OK
       xmlOut.value = text;
